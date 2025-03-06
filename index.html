@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Platformer Odyssey</title>
+    <title>Dungeon Legends: Shadow Realm</title>
     <style>
         body {
             margin: 0;
@@ -12,29 +12,36 @@
             justify-content: center;
             align-items: center;
             height: 100vh;
-            background-color: #1a1a1a;
+            background-color: #111;
             overflow: hidden;
+            font-family: Arial, sans-serif;
         }
         #gameCanvas {
-            border: 2px solid #333;
-            background-color: #87ceeb;
+            border: 2px solid #444;
         }
         #ui {
             position: absolute;
             top: 10px;
             left: 10px;
-            color: white;
-            font-family: Arial, sans-serif;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #inventory, #quests {
+            margin-top: 10px;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     <div id="ui">
-        <div>Score: <span id="score">0</span></div>
-        <div>Lives: <span id="lives">3</span></div>
-        <div>Level: <span id="level">1</span></div>
-        <div>Combo: <span id="combo">0</span></div>
+        <div>Health: <span id="health">100</span>/<span id="maxHealth">100</span></div>
+        <div>Mana: <span id="mana">50</span>/<span id="maxMana">50</span></div>
+        <div>Gold: <span id="gold">0</span></div>
+        <div>Level: <span id="level">1</span> (XP: <span id="xp">0</span>/<span id="xpNext">100</span>)</div>
+        <div id="inventory">Inventory: <span id="items">-</span></div>
+        <div id="quests">Quests: <span id="questList">-</span></div>
     </div>
     <script>
         const canvas = document.getElementById('gameCanvas');
@@ -43,117 +50,111 @@
         canvas.height = 600;
 
         // Constants
-        const GRAVITY = 0.6;
-        const FRICTION = 0.9;
-        const JUMP_FORCE = -12;
-        const MOVE_SPEED = 6;
-        const WORLD_WIDTH = 2400;
-        const WORLD_HEIGHT = 600;
+        const TILE_SIZE = 32;
+        const WORLD_WIDTH = 50;
+        const WORLD_HEIGHT = 50;
+        const MOVE_SPEED = 4;
+        const ATTACK_RANGE = 50;
 
-        // Camera
-        const camera = { x: 0, y: 0, follow: (x) => {
-            camera.x = Math.max(0, Math.min(x - canvas.width / 2, WORLD_WIDTH - canvas.width));
-        }};
-
-        // Player
-        const player = {
-            x: 100, y: 400, vx: 0, vy: 0,
-            width: 40, height: 40,
-            grounded: false, jumping: false,
-            frame: 0, direction: 1,
-            state: 'idle', combo: 0, invulnerable: 0
+        // Game state
+        let gameState = 'start';
+        let player = {
+            x: WORLD_WIDTH * TILE_SIZE / 2,
+            y: WORLD_HEIGHT * TILE_SIZE / 2,
+            width: 24, height: 24,
+            vx: 0, vy: 0,
+            health: 100, maxHealth: 100,
+            mana: 50, maxMana: 50,
+            gold: 0, level: 1, xp: 0, xpNext: 100,
+            inventory: [],
+            quests: [{ name: 'Slay 5 Goblins', type: 'kill', target: 'goblin', goal: 5, progress: 0 }],
+            attackCooldown: 0, frame: 0, direction: 'down'
         };
 
-        // Input handling
+        // Input
         const keys = {};
         document.addEventListener('keydown', (e) => { keys[e.code] = true; });
         document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-        // Game state
-        let gameState = 'start';
-        let score = 0;
-        let lives = 3;
-        let currentLevel = 0;
-
-        // Level data
-        const levels = [
-            {
-                background: [
-                    { x: 0, y: 0, width: WORLD_WIDTH, height: WORLD_HEIGHT, speed: 0, color: '#87ceeb' }, // Sky
-                    { x: 0, y: 400, width: WORLD_WIDTH, height: 200, speed: 0.2, color: '#6b8e23' }, // Hills
-                    { x: 0, y: 500, width: WORLD_WIDTH, height: 100, speed: 0.5, color: '#8b4513' }  // Ground
-                ],
-                platforms: [
-                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, type: 'ground' },
-                    { x: 200, y: 400, width: 150, height: 20, type: 'platform' },
-                    { x: 400, y: 300, width: 100, height: 20, type: 'moving', yMin: 200, yMax: 400, vy: 2 },
-                    { x: 600, y: 450, width: 120, height: 20, type: 'disappearing', timer: 0 }
-                ],
-                coins: [
-                    { x: 250, y: 350, frame: 0, collected: false },
-                    { x: 450, y: 250, frame: 0, collected: false },
-                    { x: 700, y: 400, frame: 0, collected: false }
-                ],
-                enemies: [
-                    { type: 'walker', x: 800, y: 510, vx: -2, minX: 700, maxX: 900, frame: 0 },
-                    { type: 'flyer', x: 1000, y: 200, vx: 0, vy: 2, minY: 150, maxY: 300, frame: 0 }
-                ],
-                hazards: [
-                    { x: 1200, y: 510, width: 100, height: 40, type: 'spikes' }
-                ]
-            },
-            {
-                background: [
-                    { x: 0, y: 0, width: WORLD_WIDTH, height: WORLD_HEIGHT, speed: 0, color: '#4682b4' },
-                    { x: 0, y: 450, width: WORLD_WIDTH, height: 150, speed: 0.2, color: '#2f4f4f' },
-                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, speed: 0.5, color: '#696969' }
-                ],
-                platforms: [
-                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, type: 'ground' },
-                    { x: 300, y: 350, width: 200, height: 20, type: 'platform' },
-                    { x: 600, y: 250, width: 150, height: 20, type: 'moving', yMin: 150, yMax: 350, vy: -2 },
-                    { x: 900, y: 400, width: 100, height: 20, type: 'disappearing', timer: 0 }
-                ],
-                coins: [
-                    { x: 350, y: 300, frame: 0, collected: false },
-                    { x: 650, y: 200, frame: 0, collected: false },
-                    { x: 950, y: 350, frame: 0, collected: false }
-                ],
-                enemies: [
-                    { type: 'walker', x: 1200, y: 510, vx: 3, minX: 1100, maxX: 1300, frame: 0 },
-                    { type: 'flyer', x: 1400, y: 300, vx: 0, vy: -3, minY: 200, maxY: 400, frame: 0 }
-                ],
-                hazards: [
-                    { x: 1600, y: 510, width: 150, height: 40, type: 'spikes' }
-                ]
+        // Camera
+        const camera = {
+            x: 0, y: 0,
+            update: () => {
+                camera.x = Math.max(0, Math.min(player.x - canvas.width / 2, WORLD_WIDTH * TILE_SIZE - canvas.width));
+                camera.y = Math.max(0, Math.min(player.y - canvas.height / 2, WORLD_HEIGHT * TILE_SIZE - canvas.height));
             }
-        ];
+        };
 
-        let gameObjects = { platforms: [], coins: [], enemies: [], hazards: [], background: [] };
+        // Procedural dungeon generation
+        function generateDungeon() {
+            let map = Array(WORLD_HEIGHT).fill().map(() => Array(WORLD_WIDTH).fill('wall'));
+            function carveRoom(x, y, w, h) {
+                for (let i = y; i < y + h; i++) {
+                    for (let j = x; j < x + w; j++) {
+                        if (i >= 0 && i < WORLD_HEIGHT && j >= 0 && j < WORLD_WIDTH) map[i][j] = 'floor';
+                    }
+                }
+            }
+            function carveCorridor(x1, y1, x2, y2) {
+                for (let i = Math.min(y1, y2); i <= Math.max(y1, y2); i++) {
+                    if (i >= 0 && i < WORLD_HEIGHT) map[i][x1] = 'floor';
+                }
+                for (let j = Math.min(x1, x2); j <= Math.max(x1, x2); j++) {
+                    if (y1 >= 0 && y1 < WORLD_HEIGHT) map[y1][j] = 'floor';
+                }
+            }
 
-        // Load level
-        function loadLevel(index) {
-            const level = levels[index];
-            gameObjects.background = level.background.map(bg => ({ ...bg }));
-            gameObjects.platforms = level.platforms.map(p => ({ ...p }));
-            gameObjects.coins = level.coins.map(c => ({ ...c }));
-            gameObjects.enemies = level.enemies.map(e => ({ ...e }));
-            gameObjects.hazards = level.hazards.map(h => ({ ...h }));
-            player.x = 100;
-            player.y = 400;
-            player.vx = 0;
-            player.vy = 0;
-            player.combo = 0;
-            camera.x = 0;
+            let rooms = [];
+            for (let i = 0; i < 10; i++) {
+                let w = 5 + Math.floor(Math.random() * 5);
+                let h = 5 + Math.floor(Math.random() * 5);
+                let x = Math.floor(Math.random() * (WORLD_WIDTH - w));
+                let y = Math.floor(Math.random() * (WORLD_HEIGHT - h));
+                carveRoom(x, y, w, h);
+                rooms.push({ x: x + w / 2, y: y + h / 2 });
+            }
+            for (let i = 1; i < rooms.length; i++) {
+                carveCorridor(Math.floor(rooms[i-1].x), Math.floor(rooms[i-1].y), Math.floor(rooms[i].x), Math.floor(rooms[i].y));
+            }
+            return map;
         }
 
-        // Initialize game
-        function init() {
-            currentLevel = 0;
-            loadLevel(currentLevel);
-            score = 0;
-            lives = 3;
-            gameState = 'start';
+        let map = generateDungeon();
+        let entities = [];
+
+        // Entity types
+        const entityTypes = {
+            goblin: { health: 20, damage: 5, speed: 2, color: 'green', xp: 10, drops: ['gold', 'potion'] },
+            skeleton: { health: 30, damage: 8, speed: 1.5, color: 'gray', xp: 15, drops: ['gold', 'bone'] },
+            chest: { health: 1, damage: 0, speed: 0, color: 'brown', xp: 0, drops: ['gold', 'sword', 'potion'] }
+        };
+
+        // Spawn entities
+        function spawnEntities() {
+            entities = [];
+            for (let i = 0; i < 10; i++) {
+                let x, y;
+                do { x = Math.floor(Math.random() * WORLD_WIDTH); y = Math.floor(Math.random() * WORLD_HEIGHT); }
+                while (map[y][x] !== 'floor');
+                entities.push({
+                    type: Math.random() < 0.7 ? 'goblin' : 'skeleton',
+                    x: x * TILE_SIZE, y: y * TILE_SIZE,
+                    width: 24, height: 24,
+                    ...entityTypes[Math.random() < 0.7 ? 'goblin' : 'skeleton'],
+                    frame: 0
+                });
+            }
+            for (let i = 0; i < 3; i++) {
+                let x, y;
+                do { x = Math.floor(Math.random() * WORLD_WIDTH); y = Math.floor(Math.random() * WORLD_HEIGHT); }
+                while (map[y][x] !== 'floor');
+                entities.push({
+                    type: 'chest',
+                    x: x * TILE_SIZE, y: y * TILE_SIZE,
+                    width: 24, height: 24,
+                    ...entityTypes.chest
+                });
+            }
         }
 
         // Collision detection
@@ -161,137 +162,128 @@
             return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
         }
 
+        // Initialize game
+        function init() {
+            map = generateDungeon();
+            spawnEntities();
+            player = {
+                x: WORLD_WIDTH * TILE_SIZE / 2, y: WORLD_HEIGHT * TILE_SIZE / 2,
+                width: 24, height: 24, vx: 0, vy: 0,
+                health: 100, maxHealth: 100, mana: 50, maxMana: 50,
+                gold: 0, level: 1, xp: 0, xpNext: 100,
+                inventory: [], quests: [{ name: 'Slay 5 Goblins', type: 'kill', target: 'goblin', goal: 5, progress: 0 }],
+                attackCooldown: 0, frame: 0, direction: 'down'
+            };
+            gameState = 'start';
+        }
+
         // Update game
         function update(timestamp) {
             if (gameState !== 'playing') return;
 
             // Player movement
-            player.vx *= FRICTION;
-            if (keys['ArrowLeft']) { player.vx = -MOVE_SPEED; player.direction = -1; player.state = 'run'; }
-            else if (keys['ArrowRight']) { player.vx = MOVE_SPEED; player.direction = 1; player.state = 'run'; }
-            else if (player.grounded) player.state = 'idle';
+            player.vx = 0;
+            player.vy = 0;
+            if (keys['KeyW']) { player.vy = -MOVE_SPEED; player.direction = 'up'; }
+            if (keys['KeyS']) { player.vy = MOVE_SPEED; player.direction = 'down'; }
+            if (keys['KeyA']) { player.vx = -MOVE_SPEED; player.direction = 'left'; }
+            if (keys['KeyD']) { player.vx = MOVE_SPEED; player.direction = 'right'; }
 
-            if (keys['Space'] && player.grounded && !player.jumping) {
-                player.vy = JUMP_FORCE;
-                player.grounded = false;
-                player.jumping = true;
-                player.state = 'jump';
+            let nextX = player.x + player.vx;
+            let nextY = player.y + player.vy;
+            if (nextX >= 0 && nextX <= WORLD_WIDTH * TILE_SIZE - player.width && 
+                map[Math.floor(nextY / TILE_SIZE)][Math.floor(nextX / TILE_SIZE)] !== 'wall' &&
+                map[Math.floor((nextY + player.height - 1) / TILE_SIZE)][Math.floor((nextX + player.width - 1) / TILE_SIZE)] !== 'wall') {
+                player.x = nextX;
+                player.y = nextY;
             }
-            if (!keys['Space']) player.jumping = false;
 
-            player.vy += GRAVITY;
-            player.x += player.vx;
-            player.y += player.vy;
+            player.frame = player.vx !== 0 || player.vy !== 0 ? (player.frame + 0.1) % 4 : 0;
 
-            // Animation frame
-            player.frame = (player.frame + 0.1) % 4;
-
-            // Platform collisions
-            player.grounded = false;
-            for (let p of gameObjects.platforms) {
-                if (collides(player, p)) {
-                    if (player.vy > 0 && player.y + player.height - player.vy <= p.y) {
-                        player.y = p.y - player.height;
-                        player.vy = 0;
-                        player.grounded = true;
-                    } else if (player.vy < 0 && player.y - player.vy >= p.y + p.height) {
-                        player.y = p.y + p.height;
-                        player.vy = 0;
+            // Attack
+            if (keys['Space'] && player.attackCooldown === 0) {
+                player.attackCooldown = 20;
+                for (let e of entities) {
+                    let dx = e.x - player.x;
+                    let dy = e.y - player.y;
+                    if (Math.sqrt(dx * dx + dy * dy) < ATTACK_RANGE) {
+                        e.health -= 10 + player.level * 2;
+                        if (e.health <= 0) {
+                            if (e.type !== 'chest') {
+                                player.xp += e.xp;
+                                player.gold += Math.floor(Math.random() * 5) + 1;
+                                if (e.type === 'goblin') player.quests[0].progress++;
+                            }
+                            e.drops.forEach(drop => {
+                                if (Math.random() < 0.5) player.inventory.push(drop);
+                            });
+                            entities = entities.filter(ent => ent !== e);
+                        }
                     }
                 }
-                if (p.type === 'moving') {
-                    p.y += p.vy;
-                    if (p.y < p.yMin || p.y > p.yMax) p.vy *= -1;
-                }
-                if (p.type === 'disappearing' && collides(player, p) && p.timer === 0) {
-                    p.timer = 60;
-                }
-                if (p.timer > 0) {
-                    p.timer--;
-                    if (p.timer === 0) gameObjects.platforms = gameObjects.platforms.filter(plat => plat !== p);
+            }
+            if (player.attackCooldown > 0) player.attackCooldown--;
+
+            // Level up
+            if (player.xp >= player.xpNext) {
+                player.level++;
+                player.xp -= player.xpNext;
+                player.xpNext *= 1.5;
+                player.maxHealth += 20;
+                player.health = player.maxHealth;
+                player.maxMana += 10;
+                player.mana = player.maxMana;
+            }
+
+            // Quest completion
+            if (player.quests[0].progress >= player.quests[0].goal) {
+                player.gold += 50;
+                player.xp += 50;
+                player.quests = [];
+            }
+
+            // Enemy AI
+            for (let e of entities) {
+                if (e.type !== 'chest') {
+                    e.frame = (e.frame + 0.1) % 4;
+                    let dx = player.x - e.x;
+                    let dy = player.y - e.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 200) {
+                        e.x += (dx / dist) * e.speed;
+                        e.y += (dy / dist) * e.speed;
+                        if (collides(player, e) && player.attackCooldown === 0) {
+                            player.health -= e.damage;
+                            player.attackCooldown = 20;
+                            if (player.health <= 0) gameState = 'game over';
+                        }
+                    }
                 }
             }
 
-            // Coin collection
-            for (let i = gameObjects.coins.length - 1; i >= 0; i--) {
-                let coin = gameObjects.coins[i];
-                coin.frame = (coin.frame + 0.1) % 4;
-                if (collides(player, { x: coin.x, y: coin.y, width: 20, height: 20 }) && !coin.collected) {
-                    coin.collected = true;
-                    score += 10 + player.combo * 5;
-                    player.combo++;
-                    gameObjects.coins.splice(i, 1);
-                }
+            // Regenerate mana
+            if (player.mana < player.maxMana) player.mana += 0.1;
+
+            // Use inventory items
+            if (keys['KeyE'] && player.inventory.includes('potion') && player.health < player.maxHealth) {
+                player.health = Math.min(player.maxHealth, player.health + 30);
+                player.inventory.splice(player.inventory.indexOf('potion'), 1);
             }
 
-            // Enemy updates
-            for (let e of gameObjects.enemies) {
-                e.frame = (e.frame + 0.1) % 4;
-                if (e.type === 'walker') {
-                    e.x += e.vx;
-                    if (e.x < e.minX || e.x > e.maxX) e.vx *= -1;
-                } else if (e.type === 'flyer') {
-                    e.y += e.vy;
-                    if (e.y < e.minY || e.y > e.maxY) e.vy *= -1;
-                }
-                if (collides(player, { x: e.x, y: e.y, width: 30, height: 30 }) && player.invulnerable === 0) {
-                    lives--;
-                    player.invulnerable = 60;
-                    player.x = 100;
-                    player.y = 400;
-                    player.vx = 0;
-                    player.vy = 0;
-                    player.combo = 0;
-                    if (lives <= 0) gameState = 'game over';
-                }
-            }
-
-            // Hazard collisions
-            for (let h of gameObjects.hazards) {
-                if (collides(player, h) && player.invulnerable === 0) {
-                    lives--;
-                    player.invulnerable = 60;
-                    player.x = 100;
-                    player.y = 400;
-                    player.vx = 0;
-                    player.vy = 0;
-                    player.combo = 0;
-                    if (lives <= 0) gameState = 'game over';
-                }
-            }
-
-            // Level completion
-            if (gameObjects.coins.length === 0) {
-                currentLevel++;
-                if (currentLevel < levels.length) {
-                    loadLevel(currentLevel);
-                } else {
-                    gameState = 'win';
-                }
-            }
-
-            // Boundaries
-            player.x = Math.max(0, Math.min(player.x, WORLD_WIDTH - player.width));
-            if (player.y > WORLD_HEIGHT) {
-                lives--;
-                player.x = 100;
-                player.y = 400;
-                player.vx = 0;
-                player.vy = 0;
-                if (lives <= 0) gameState = 'game over';
-            }
-
-            // Update invulnerability
-            if (player.invulnerable > 0) player.invulnerable--;
-
-            // Update camera
-            camera.follow(player.x);
+            camera.update();
 
             // Update UI
-            document.getElementById('score').textContent = score;
-            document.getElementById('lives').textContent = lives;
-            document.getElementById('level').textContent = currentLevel + 1;
-            document.getElementById('combo').textContent = player.combo;
+            document.getElementById('health').textContent = Math.floor(player.health);
+            document.getElementById('maxHealth').textContent = player.maxHealth;
+            document.getElementById('mana').textContent = Math.floor(player.mana);
+            document.getElementById('maxMana').textContent = player.maxMana;
+            document.getElementById('gold').textContent = player.gold;
+            document.getElementById('level').textContent = player.level;
+            document.getElementById('xp').textContent = Math.floor(player.xp);
+            document.getElementById('xpNext').textContent = Math.floor(player.xpNext);
+            document.getElementById('items').textContent = player.inventory.length > 0 ? player.inventory.join(', ') : '-';
+            document.getElementById('questList').textContent = player.quests.length > 0 ? 
+                `${player.quests[0].name} (${player.quests[0].progress}/${player.quests[0].goal})` : 'None';
         }
 
         // Draw game
@@ -302,50 +294,43 @@
                 ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
-                ctx.fillText('Press Space to Begin', canvas.width / 2, canvas.height / 2);
+                ctx.fillText('Dungeon Legends: Shadow Realm', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.font = '24px Arial';
+                ctx.fillText('Press Space to Start', canvas.width / 2, canvas.height / 2 + 50);
                 return;
             }
 
-            // Draw background with parallax
-            for (let bg of gameObjects.background) {
-                ctx.fillStyle = bg.color;
-                let bgX = -(camera.x * bg.speed) % bg.width;
-                ctx.fillRect(bgX, bg.y, bg.width, bg.height);
-                if (bgX < 0) ctx.fillRect(bgX + bg.width, bg.y, bg.width, bg.height);
-            }
-
-            // Draw platforms
-            for (let p of gameObjects.platforms) {
-                ctx.fillStyle = p.type === 'disappearing' && p.timer > 0 ? 'orange' : 'green';
-                ctx.fillRect(p.x - camera.x, p.y - camera.y, p.width, p.height);
-            }
-
-            // Draw coins
-            ctx.fillStyle = 'gold';
-            for (let c of gameObjects.coins) {
-                if (!c.collected) {
-                    let size = 20 + Math.sin(c.frame) * 5;
-                    ctx.fillRect(c.x - camera.x - size / 2, c.y - camera.y - size / 2, size, size);
+            // Draw map
+            for (let y = 0; y < WORLD_HEIGHT; y++) {
+                for (let x = 0; x < WORLD_WIDTH; x++) {
+                    let screenX = x * TILE_SIZE - camera.x;
+                    let screenY = y * TILE_SIZE - camera.y;
+                    if (screenX > -TILE_SIZE && screenX < canvas.width && screenY > -TILE_SIZE && screenY < canvas.height) {
+                        ctx.fillStyle = map[y][x] === 'wall' ? '#333' : '#666';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+                    }
                 }
             }
 
-            // Draw enemies
-            for (let e of gameObjects.enemies) {
-                ctx.fillStyle = e.type === 'walker' ? 'purple' : 'red';
-                ctx.fillRect(e.x - camera.x, e.y - camera.y, 30, 30);
-            }
-
-            // Draw hazards
-            ctx.fillStyle = 'gray';
-            for (let h of gameObjects.hazards) {
-                ctx.fillRect(h.x - camera.x, h.y - camera.y, h.width, h.height);
+            // Draw entities
+            for (let e of entities) {
+                ctx.fillStyle = e.color;
+                ctx.fillRect(e.x - camera.x, e.y - camera.y, e.width, e.height);
             }
 
             // Draw player
-            ctx.fillStyle = player.invulnerable > 0 && Math.floor(player.invulnerable / 5) % 2 === 0 ? 'gray' : 'blue';
+            ctx.fillStyle = player.attackCooldown > 0 ? 'red' : 'blue';
             ctx.fillRect(player.x - camera.x, player.y - camera.y, player.width, player.height);
 
-            // Game over or win screen
+            // Draw attack range (debug)
+            if (player.attackCooldown > 0) {
+                ctx.strokeStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(player.x - camera.x + player.width / 2, player.y - camera.y + player.height / 2, ATTACK_RANGE, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Game over or win
             if (gameState === 'game over') {
                 ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
@@ -353,20 +338,13 @@
                 ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2);
                 ctx.font = '24px Arial';
                 ctx.fillText('Press Space to Restart', canvas.width / 2, canvas.height / 2 + 50);
-            } else if (gameState === 'win') {
-                ctx.fillStyle = 'white';
-                ctx.font = '48px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText('Victory!', canvas.width / 2, canvas.height / 2);
-                ctx.font = '24px Arial';
-                ctx.fillText('Press Space to Replay', canvas.width / 2, canvas.height / 2 + 50);
             }
         }
 
         // Game loop
         function gameLoop(timestamp) {
             if (gameState === 'start' && keys['Space']) gameState = 'playing';
-            if ((gameState === 'game over' || gameState === 'win') && keys['Space']) init();
+            if (gameState === 'game over' && keys['Space']) init();
             update(timestamp);
             draw();
             requestAnimationFrame(gameLoop);
