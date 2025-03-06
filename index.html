@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dungeon Legends: Shadow Realm</title>
+    <title>Galactic Defender: Nebula Assault</title>
     <style>
         body {
             margin: 0;
@@ -12,149 +12,185 @@
             justify-content: center;
             align-items: center;
             height: 100vh;
-            background-color: #111;
+            background-color: #000;
             overflow: hidden;
             font-family: Arial, sans-serif;
         }
+
         #gameCanvas {
-            border: 2px solid #444;
+            border: 1px solid #fff;
+            background-color: #000;
         }
+
         #ui {
             position: absolute;
             top: 10px;
             left: 10px;
             color: #fff;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
             padding: 10px;
             border-radius: 5px;
+            font-size: 16px;
         }
-        #inventory, #quests {
-            margin-top: 10px;
+
+        #upgrades {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     <div id="ui">
+        <div>Score: <span id="score">0</span></div>
         <div>Health: <span id="health">100</span>/<span id="maxHealth">100</span></div>
-        <div>Mana: <span id="mana">50</span>/<span id="maxMana">50</span></div>
-        <div>Gold: <span id="gold">0</span></div>
-        <div>Level: <span id="level">1</span> (XP: <span id="xp">0</span>/<span id="xpNext">100</span>)</div>
-        <div id="inventory">Inventory: <span id="items">-</span></div>
-        <div id="quests">Quests: <span id="questList">-</span></div>
+        <div>Shield: <span id="shield">50</span>/<span id="maxShield">50</span></div>
+        <div>Wave: <span id="wave">1</span></div>
     </div>
+    <div id="upgrades">
+        <div>Weapon Level: <span id="weaponLevel">1</span></div>
+        <div>Upgrade Points: <span id="upgradePoints">0</span></div>
+    </div>
+
     <script>
+        // Canvas setup
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800;
         canvas.height = 600;
 
-        // Constants
-        const TILE_SIZE = 32;
-        const WORLD_WIDTH = 50;
-        const WORLD_HEIGHT = 50;
-        const MOVE_SPEED = 4;
-        const ATTACK_RANGE = 50;
+        // Game constants
+        const PLAYER_SPEED = 5;
+        const BULLET_SPEED = 10;
+        const ENEMY_SPEED = 2;
+        const BOSS_SPEED = 1;
+        const STAR_COUNT = 100;
 
         // Game state
         let gameState = 'start';
-        let player = {
-            x: WORLD_WIDTH * TILE_SIZE / 2,
-            y: WORLD_HEIGHT * TILE_SIZE / 2,
-            width: 24, height: 24,
-            vx: 0, vy: 0,
-            health: 100, maxHealth: 100,
-            mana: 50, maxMana: 50,
-            gold: 0, level: 1, xp: 0, xpNext: 100,
-            inventory: [],
-            quests: [{ name: 'Slay 5 Goblins', type: 'kill', target: 'goblin', goal: 5, progress: 0 }],
-            attackCooldown: 0, frame: 0, direction: 'down'
+        let score = 0;
+        let wave = 1;
+        let upgradePoints = 0;
+
+        // Player object
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 50,
+            width: 40,
+            height: 20,
+            health: 100,
+            maxHealth: 100,
+            shield: 50,
+            maxShield: 50,
+            weaponLevel: 1,
+            shootCooldown: 0,
+            invulnerable: 0
         };
 
-        // Input
+        // Input handling
         const keys = {};
         document.addEventListener('keydown', (e) => { keys[e.code] = true; });
         document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-        // Camera
-        const camera = {
-            x: 0, y: 0,
-            update: () => {
-                camera.x = Math.max(0, Math.min(player.x - canvas.width / 2, WORLD_WIDTH * TILE_SIZE - canvas.width));
-                camera.y = Math.max(0, Math.min(player.y - canvas.height / 2, WORLD_HEIGHT * TILE_SIZE - canvas.height));
-            }
-        };
+        // Game objects
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+        let stars = [];
+        let boss = null;
 
-        // Procedural dungeon generation
-        function generateDungeon() {
-            let map = Array(WORLD_HEIGHT).fill().map(() => Array(WORLD_WIDTH).fill('wall'));
-            function carveRoom(x, y, w, h) {
-                for (let i = y; i < y + h; i++) {
-                    for (let j = x; j < x + w; j++) {
-                        if (i >= 0 && i < WORLD_HEIGHT && j >= 0 && j < WORLD_WIDTH) map[i][j] = 'floor';
-                    }
-                }
+        // Starfield generation
+        function generateStars() {
+            for (let i = 0; i < STAR_COUNT; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 1,
+                    speed: Math.random() * 2 + 1
+                });
             }
-            function carveCorridor(x1, y1, x2, y2) {
-                for (let i = Math.min(y1, y2); i <= Math.max(y1, y2); i++) {
-                    if (i >= 0 && i < WORLD_HEIGHT) map[i][x1] = 'floor';
-                }
-                for (let j = Math.min(x1, x2); j <= Math.max(x1, x2); j++) {
-                    if (y1 >= 0 && y1 < WORLD_HEIGHT) map[y1][j] = 'floor';
-                }
-            }
-
-            let rooms = [];
-            for (let i = 0; i < 10; i++) {
-                let w = 5 + Math.floor(Math.random() * 5);
-                let h = 5 + Math.floor(Math.random() * 5);
-                let x = Math.floor(Math.random() * (WORLD_WIDTH - w));
-                let y = Math.floor(Math.random() * (WORLD_HEIGHT - h));
-                carveRoom(x, y, w, h);
-                rooms.push({ x: x + w / 2, y: y + h / 2 });
-            }
-            for (let i = 1; i < rooms.length; i++) {
-                carveCorridor(Math.floor(rooms[i-1].x), Math.floor(rooms[i-1].y), Math.floor(rooms[i].x), Math.floor(rooms[i].y));
-            }
-            return map;
         }
 
-        let map = generateDungeon();
-        let entities = [];
+        // Particle effects
+        function spawnParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    size: Math.random() * 5 + 2,
+                    life: 30,
+                    color: color
+                });
+            }
+        }
 
-        // Entity types
-        const entityTypes = {
-            goblin: { health: 20, damage: 5, speed: 2, color: 'green', xp: 10, drops: ['gold', 'potion'] },
-            skeleton: { health: 30, damage: 8, speed: 1.5, color: 'gray', xp: 15, drops: ['gold', 'bone'] },
-            chest: { health: 1, damage: 0, speed: 0, color: 'brown', xp: 0, drops: ['gold', 'sword', 'potion'] }
+        // Bullet creation
+        function shootBullet() {
+            if (player.shootCooldown <= 0) {
+                if (player.weaponLevel === 1) {
+                    bullets.push({ x: player.x + player.width / 2 - 2, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED });
+                } else if (player.weaponLevel === 2) {
+                    bullets.push({ x: player.x + player.width / 4, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED });
+                    bullets.push({ x: player.x + 3 * player.width / 4, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED });
+                } else if (player.weaponLevel >= 3) {
+                    bullets.push({ x: player.x + player.width / 2 - 2, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED });
+                    bullets.push({ x: player.x + player.width / 4, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED, vx: -2 });
+                    bullets.push({ x: player.x + 3 * player.width / 4, y: player.y, width: 4, height: 10, vy: -BULLET_SPEED, vx: 2 });
+                }
+                player.shootCooldown = 15 - player.weaponLevel * 2;
+                // Simulate sound: new Audio('shoot.wav').play();
+            }
+        }
+
+        // Enemy types
+        const enemyTypes = {
+            drone: { width: 30, height: 30, health: 20, speed: ENEMY_SPEED, color: 'red', points: 10 },
+            interceptor: { width: 40, height: 20, health: 40, speed: ENEMY_SPEED + 1, color: 'orange', points: 20 },
+            bomber: { width: 50, height: 40, health: 60, speed: ENEMY_SPEED - 1, color: 'purple', points: 30 }
         };
 
-        // Spawn entities
-        function spawnEntities() {
-            entities = [];
-            for (let i = 0; i < 10; i++) {
-                let x, y;
-                do { x = Math.floor(Math.random() * WORLD_WIDTH); y = Math.floor(Math.random() * WORLD_HEIGHT); }
-                while (map[y][x] !== 'floor');
-                entities.push({
-                    type: Math.random() < 0.7 ? 'goblin' : 'skeleton',
-                    x: x * TILE_SIZE, y: y * TILE_SIZE,
-                    width: 24, height: 24,
-                    ...entityTypes[Math.random() < 0.7 ? 'goblin' : 'skeleton'],
+        // Spawn enemies
+        function spawnWave() {
+            enemies = [];
+            let enemyCount = wave * 3;
+            for (let i = 0; i < enemyCount; i++) {
+                let type = wave > 5 && Math.random() < 0.3 ? 'bomber' : wave > 3 && Math.random() < 0.5 ? 'interceptor' : 'drone';
+                enemies.push({
+                    x: Math.random() * (canvas.width - enemyTypes[type].width),
+                    y: -enemyTypes[type].height,
+                    ...enemyTypes[type],
+                    vy: enemyTypes[type].speed,
                     frame: 0
                 });
             }
-            for (let i = 0; i < 3; i++) {
-                let x, y;
-                do { x = Math.floor(Math.random() * WORLD_WIDTH); y = Math.floor(Math.random() * WORLD_HEIGHT); }
-                while (map[y][x] !== 'floor');
-                entities.push({
-                    type: 'chest',
-                    x: x * TILE_SIZE, y: y * TILE_SIZE,
-                    width: 24, height: 24,
-                    ...entityTypes.chest
-                });
+            if (wave % 5 === 0) {
+                spawnBoss();
             }
+        }
+
+        // Boss creation
+        function spawnBoss() {
+            boss = {
+                x: canvas.width / 2 - 50,
+                y: -100,
+                width: 100,
+                height: 100,
+                health: 200 + wave * 50,
+                maxHealth: 200 + wave * 50,
+                speed: BOSS_SPEED,
+                color: 'darkred',
+                points: 100,
+                attackCooldown: 0,
+                phase: 1
+            };
         }
 
         // Collision detection
@@ -164,180 +200,245 @@
 
         // Initialize game
         function init() {
-            map = generateDungeon();
-            spawnEntities();
-            player = {
-                x: WORLD_WIDTH * TILE_SIZE / 2, y: WORLD_HEIGHT * TILE_SIZE / 2,
-                width: 24, height: 24, vx: 0, vy: 0,
-                health: 100, maxHealth: 100, mana: 50, maxMana: 50,
-                gold: 0, level: 1, xp: 0, xpNext: 100,
-                inventory: [], quests: [{ name: 'Slay 5 Goblins', type: 'kill', target: 'goblin', goal: 5, progress: 0 }],
-                attackCooldown: 0, frame: 0, direction: 'down'
-            };
+            score = 0;
+            wave = 1;
+            upgradePoints = 0;
+            player.x = canvas.width / 2;
+            player.y = canvas.height - 50;
+            player.health = 100;
+            player.shield = 50;
+            player.weaponLevel = 1;
+            player.shootCooldown = 0;
+            player.invulnerable = 0;
+            bullets = [];
+            enemies = [];
+            particles = [];
+            boss = null;
+            generateStars();
+            spawnWave();
             gameState = 'start';
         }
 
-        // Update game
+        // Update game logic
         function update(timestamp) {
             if (gameState !== 'playing') return;
 
             // Player movement
-            player.vx = 0;
-            player.vy = 0;
-            if (keys['KeyW']) { player.vy = -MOVE_SPEED; player.direction = 'up'; }
-            if (keys['KeyS']) { player.vy = MOVE_SPEED; player.direction = 'down'; }
-            if (keys['KeyA']) { player.vx = -MOVE_SPEED; player.direction = 'left'; }
-            if (keys['KeyD']) { player.vx = MOVE_SPEED; player.direction = 'right'; }
+            if (keys['ArrowLeft'] && player.x > 0) player.x -= PLAYER_SPEED;
+            if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += PLAYER_SPEED;
+            if (keys['ArrowUp'] && player.y > canvas.height / 2) player.y -= PLAYER_SPEED;
+            if (keys['ArrowDown'] && player.y < canvas.height - player.height) player.y += PLAYER_SPEED;
+            if (keys['Space']) shootBullet();
 
-            let nextX = player.x + player.vx;
-            let nextY = player.y + player.vy;
-            if (nextX >= 0 && nextX <= WORLD_WIDTH * TILE_SIZE - player.width && 
-                map[Math.floor(nextY / TILE_SIZE)][Math.floor(nextX / TILE_SIZE)] !== 'wall' &&
-                map[Math.floor((nextY + player.height - 1) / TILE_SIZE)][Math.floor((nextX + player.width - 1) / TILE_SIZE)] !== 'wall') {
-                player.x = nextX;
-                player.y = nextY;
+            if (player.shootCooldown > 0) player.shootCooldown--;
+            if (player.invulnerable > 0) player.invulnerable--;
+
+            // Update bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].y += bullets[i].vy;
+                if (bullets[i].vx) bullets[i].x += bullets[i].vx;
+                if (bullets[i].y < 0) bullets.splice(i, 1);
             }
 
-            player.frame = player.vx !== 0 || player.vy !== 0 ? (player.frame + 0.1) % 4 : 0;
+            // Update stars
+            for (let star of stars) {
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = -star.size;
+                    star.x = Math.random() * canvas.width;
+                }
+            }
 
-            // Attack
-            if (keys['Space'] && player.attackCooldown === 0) {
-                player.attackCooldown = 20;
-                for (let e of entities) {
-                    let dx = e.x - player.x;
-                    let dy = e.y - player.y;
-                    if (Math.sqrt(dx * dx + dy * dy) < ATTACK_RANGE) {
-                        e.health -= 10 + player.level * 2;
-                        if (e.health <= 0) {
-                            if (e.type !== 'chest') {
-                                player.xp += e.xp;
-                                player.gold += Math.floor(Math.random() * 5) + 1;
-                                if (e.type === 'goblin') player.quests[0].progress++;
-                            }
-                            e.drops.forEach(drop => {
-                                if (Math.random() < 0.5) player.inventory.push(drop);
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let enemy = enemies[i];
+                enemy.y += enemy.vy;
+                enemy.frame = (enemy.frame + 0.1) % 4;
+                if (enemy.y > canvas.height) enemies.splice(i, 1);
+
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    if (collides(bullets[j], enemy)) {
+                        enemy.health -= 10 * player.weaponLevel;
+                        spawnParticles(bullets[j].x, bullets[j].y, 5, 'yellow');
+                        bullets.splice(j, 1);
+                        if (enemy.health <= 0) {
+                            score += enemy.points;
+                            upgradePoints += Math.floor(enemy.points / 10);
+                            spawnParticles(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, 10, enemy.color);
+                            enemies.splice(i, 1);
+                            break;
+                        }
+                    }
+                }
+
+                if (collides(player, enemy) && player.invulnerable === 0) {
+                    if (player.shield > 0) {
+                        player.shield -= enemy.health;
+                        if (player.shield < 0) {
+                            player.health += player.shield;
+                            player.shield = 0;
+                        }
+                    } else {
+                        player.health -= enemy.health;
+                    }
+                    player.invulnerable = 60;
+                    spawnParticles(player.x + player.width / 2, player.y + player.height / 2, 10, 'blue');
+                    enemies.splice(i, 1);
+                    if (player.health <= 0) gameState = 'game over';
+                }
+            }
+
+            // Update boss
+            if (boss) {
+                boss.y += boss.speed;
+                if (boss.y > 100) boss.y = 100;
+                boss.attackCooldown--;
+                if (boss.attackCooldown <= 0) {
+                    if (boss.phase === 1) {
+                        for (let i = 0; i < 3; i++) {
+                            enemies.push({
+                                x: boss.x + i * 40, y: boss.y + boss.height, width: 20, height: 20,
+                                health: 10, speed: ENEMY_SPEED, color: 'pink', points: 5, vy: ENEMY_SPEED * 2
                             });
-                            entities = entities.filter(ent => ent !== e);
+                        }
+                        boss.attackCooldown = 60;
+                    } else if (boss.phase === 2) {
+                        enemies.push({
+                            x: boss.x + boss.width / 2, y: boss.y + boss.height, width: 30, height: 30,
+                            health: 20, speed: ENEMY_SPEED, color: 'cyan', points: 10, vy: ENEMY_SPEED * 3
+                        });
+                        boss.attackCooldown = 30;
+                    }
+                }
+
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    if (collides(bullets[i], boss)) {
+                        boss.health -= 10 * player.weaponLevel;
+                        spawnParticles(bullets[i].x, bullets[i].y, 5, 'yellow');
+                        bullets.splice(i, 1);
+                        if (boss.health <= boss.maxHealth / 2 && boss.phase === 1) {
+                            boss.phase = 2;
+                            boss.color = 'red';
+                            boss.speed *= 1.5;
+                        }
+                        if (boss.health <= 0) {
+                            score += boss.points;
+                            upgradePoints += 10;
+                            spawnParticles(boss.x + boss.width / 2, boss.y + boss.height / 2, 20, 'darkred');
+                            boss = null;
+                            wave++;
+                            spawnWave();
                         }
                     }
                 }
-            }
-            if (player.attackCooldown > 0) player.attackCooldown--;
 
-            // Level up
-            if (player.xp >= player.xpNext) {
-                player.level++;
-                player.xp -= player.xpNext;
-                player.xpNext *= 1.5;
-                player.maxHealth += 20;
-                player.health = player.maxHealth;
-                player.maxMana += 10;
-                player.mana = player.maxMana;
-            }
-
-            // Quest completion
-            if (player.quests[0].progress >= player.quests[0].goal) {
-                player.gold += 50;
-                player.xp += 50;
-                player.quests = [];
-            }
-
-            // Enemy AI
-            for (let e of entities) {
-                if (e.type !== 'chest') {
-                    e.frame = (e.frame + 0.1) % 4;
-                    let dx = player.x - e.x;
-                    let dy = player.y - e.y;
-                    let dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 200) {
-                        e.x += (dx / dist) * e.speed;
-                        e.y += (dy / dist) * e.speed;
-                        if (collides(player, e) && player.attackCooldown === 0) {
-                            player.health -= e.damage;
-                            player.attackCooldown = 20;
-                            if (player.health <= 0) gameState = 'game over';
-                        }
-                    }
+                if (collides(player, boss) && player.invulnerable === 0) {
+                    player.health -= 20;
+                    player.invulnerable = 60;
+                    spawnParticles(player.x + player.width / 2, player.y + player.height / 2, 10, 'blue');
+                    if (player.health <= 0) gameState = 'game over';
                 }
             }
 
-            // Regenerate mana
-            if (player.mana < player.maxMana) player.mana += 0.1;
-
-            // Use inventory items
-            if (keys['KeyE'] && player.inventory.includes('potion') && player.health < player.maxHealth) {
-                player.health = Math.min(player.maxHealth, player.health + 30);
-                player.inventory.splice(player.inventory.indexOf('potion'), 1);
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                p.size *= 0.95;
+                if (p.life <= 0) particles.splice(i, 1);
             }
 
-            camera.update();
+            // Wave progression
+            if (enemies.length === 0 && !boss) {
+                wave++;
+                spawnWave();
+            }
+
+            // Regenerate shield
+            if (player.shield < player.maxShield) player.shield += 0.1;
+
+            // Upgrade weapon
+            if (keys['KeyU'] && upgradePoints >= 5 && player.weaponLevel < 3) {
+                player.weaponLevel++;
+                upgradePoints -= 5;
+            }
 
             // Update UI
+            document.getElementById('score').textContent = score;
             document.getElementById('health').textContent = Math.floor(player.health);
             document.getElementById('maxHealth').textContent = player.maxHealth;
-            document.getElementById('mana').textContent = Math.floor(player.mana);
-            document.getElementById('maxMana').textContent = player.maxMana;
-            document.getElementById('gold').textContent = player.gold;
-            document.getElementById('level').textContent = player.level;
-            document.getElementById('xp').textContent = Math.floor(player.xp);
-            document.getElementById('xpNext').textContent = Math.floor(player.xpNext);
-            document.getElementById('items').textContent = player.inventory.length > 0 ? player.inventory.join(', ') : '-';
-            document.getElementById('questList').textContent = player.quests.length > 0 ? 
-                `${player.quests[0].name} (${player.quests[0].progress}/${player.quests[0].goal})` : 'None';
+            document.getElementById('shield').textContent = Math.floor(player.shield);
+            document.getElementById('maxShield').textContent = player.maxShield;
+            document.getElementById('wave').textContent = wave;
+            document.getElementById('weaponLevel').textContent = player.weaponLevel;
+            document.getElementById('upgradePoints').textContent = upgradePoints;
         }
 
         // Draw game
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+            // Draw stars
+            ctx.fillStyle = 'white';
+            for (let star of stars) {
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            }
+
             if (gameState === 'start') {
                 ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
-                ctx.fillText('Dungeon Legends: Shadow Realm', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.fillText('Galactic Defender', canvas.width / 2, canvas.height / 2 - 50);
                 ctx.font = '24px Arial';
                 ctx.fillText('Press Space to Start', canvas.width / 2, canvas.height / 2 + 50);
                 return;
             }
 
-            // Draw map
-            for (let y = 0; y < WORLD_HEIGHT; y++) {
-                for (let x = 0; x < WORLD_WIDTH; x++) {
-                    let screenX = x * TILE_SIZE - camera.x;
-                    let screenY = y * TILE_SIZE - camera.y;
-                    if (screenX > -TILE_SIZE && screenX < canvas.width && screenY > -TILE_SIZE && screenY < canvas.height) {
-                        ctx.fillStyle = map[y][x] === 'wall' ? '#333' : '#666';
-                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-                    }
-                }
-            }
-
-            // Draw entities
-            for (let e of entities) {
-                ctx.fillStyle = e.color;
-                ctx.fillRect(e.x - camera.x, e.y - camera.y, e.width, e.height);
-            }
-
             // Draw player
-            ctx.fillStyle = player.attackCooldown > 0 ? 'red' : 'blue';
-            ctx.fillRect(player.x - camera.x, player.y - camera.y, player.width, player.height);
+            ctx.fillStyle = player.invulnerable > 0 && Math.floor(player.invulnerable / 5) % 2 === 0 ? 'gray' : 'blue';
+            ctx.beginPath();
+            ctx.moveTo(player.x + player.width / 2, player.y);
+            ctx.lineTo(player.x, player.y + player.height);
+            ctx.lineTo(player.x + player.width, player.y + player.height);
+            ctx.closePath();
+            ctx.fill();
 
-            // Draw attack range (debug)
-            if (player.attackCooldown > 0) {
-                ctx.strokeStyle = 'red';
-                ctx.beginPath();
-                ctx.arc(player.x - camera.x + player.width / 2, player.y - camera.y + player.height / 2, ATTACK_RANGE, 0, Math.PI * 2);
-                ctx.stroke();
+            // Draw bullets
+            ctx.fillStyle = 'yellow';
+            for (let bullet of bullets) {
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
             }
 
-            // Game over or win
+            // Draw enemies
+            for (let enemy of enemies) {
+                ctx.fillStyle = enemy.color;
+                ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+            }
+
+            // Draw boss
+            if (boss) {
+                ctx.fillStyle = boss.color;
+                ctx.fillRect(boss.x, boss.y, boss.width, boss.height);
+                ctx.fillStyle = 'white';
+                ctx.fillRect(boss.x + 10, boss.y - 10, (boss.health / boss.maxHealth) * (boss.width - 20), 5);
+            }
+
+            // Draw particles
+            for (let p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+
+            // Game over
             if (gameState === 'game over') {
                 ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2);
                 ctx.font = '24px Arial';
-                ctx.fillText('Press Space to Restart', canvas.width / 2, canvas.height / 2 + 50);
+                ctx.fillText(`Score: ${score} - Press Space to Restart`, canvas.width / 2, canvas.height / 2 + 50);
             }
         }
 
