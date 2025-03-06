@@ -3,125 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Platformer Adventure</title>
+    <title>Advanced Platformer Odyssey</title>
     <style>
-        /* Center the canvas and style the page */
         body {
+            margin: 0;
+            padding: 0;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
+            background-color: #1a1a1a;
             overflow: hidden;
         }
-
         #gameCanvas {
-            border: 2px solid black;
+            border: 2px solid #333;
+            background-color: #87ceeb;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="ui">
+        <div>Score: <span id="score">0</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+        <div>Level: <span id="level">1</span></div>
+        <div>Combo: <span id="combo">0</span></div>
+    </div>
     <script>
-        // Get canvas and context
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-
-        // Set canvas dimensions
         canvas.width = 800;
         canvas.height = 600;
 
-        // Game constants
-        const gravity = 0.5;
-        const jumpStrength = -10;
-        const playerSpeed = 5;
+        // Constants
+        const GRAVITY = 0.6;
+        const FRICTION = 0.9;
+        const JUMP_FORCE = -12;
+        const MOVE_SPEED = 6;
+        const WORLD_WIDTH = 2400;
+        const WORLD_HEIGHT = 600;
 
-        // Player object
+        // Camera
+        const camera = { x: 0, y: 0, follow: (x) => {
+            camera.x = Math.max(0, Math.min(x - canvas.width / 2, WORLD_WIDTH - canvas.width));
+        }};
+
+        // Player
         const player = {
-            x: 100,
-            y: 500,
-            width: 50,
-            height: 50,
-            vx: 0,
-            vy: 0,
-            jumping: false,
-            grounded: false
+            x: 100, y: 400, vx: 0, vy: 0,
+            width: 40, height: 40,
+            grounded: false, jumping: false,
+            frame: 0, direction: 1,
+            state: 'idle', combo: 0, invulnerable: 0
         };
 
-        // Key states
-        const keys = {
-            left: false,
-            right: false,
-            jump: false
-        };
+        // Input handling
+        const keys = {};
+        document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+        document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-        // Game state variables
+        // Game state
         let gameState = 'start';
         let score = 0;
         let lives = 3;
         let currentLevel = 0;
 
-        // Define levels with platforms, coins, and enemies
+        // Level data
         const levels = [
             {
+                background: [
+                    { x: 0, y: 0, width: WORLD_WIDTH, height: WORLD_HEIGHT, speed: 0, color: '#87ceeb' }, // Sky
+                    { x: 0, y: 400, width: WORLD_WIDTH, height: 200, speed: 0.2, color: '#6b8e23' }, // Hills
+                    { x: 0, y: 500, width: WORLD_WIDTH, height: 100, speed: 0.5, color: '#8b4513' }  // Ground
+                ],
                 platforms: [
-                    { x: 0, y: 550, width: 800, height: 50, type: 'normal' },
-                    { x: 200, y: 400, width: 200, height: 20, type: 'normal' },
-                    { x: 500, y: 300, width: 150, height: 20, type: 'disappearing' },
-                    { x: 100, y: 200, width: 100, height: 20, type: 'normal' }
+                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, type: 'ground' },
+                    { x: 200, y: 400, width: 150, height: 20, type: 'platform' },
+                    { x: 400, y: 300, width: 100, height: 20, type: 'moving', yMin: 200, yMax: 400, vy: 2 },
+                    { x: 600, y: 450, width: 120, height: 20, type: 'disappearing', timer: 0 }
                 ],
                 coins: [
-                    { x: 250, y: 350, phase: 0 },
-                    { x: 550, y: 250, phase: 0 },
-                    { x: 150, y: 150, phase: 0 }
+                    { x: 250, y: 350, frame: 0, collected: false },
+                    { x: 450, y: 250, frame: 0, collected: false },
+                    { x: 700, y: 400, frame: 0, collected: false }
                 ],
                 enemies: [
-                    { x: 300, y: 380, vx: 2, minX: 200, maxX: 400 },
-                    { x: 600, y: 280, vx: -2, minX: 500, maxX: 650 }
+                    { type: 'walker', x: 800, y: 510, vx: -2, minX: 700, maxX: 900, frame: 0 },
+                    { type: 'flyer', x: 1000, y: 200, vx: 0, vy: 2, minY: 150, maxY: 300, frame: 0 }
+                ],
+                hazards: [
+                    { x: 1200, y: 510, width: 100, height: 40, type: 'spikes' }
                 ]
             },
             {
+                background: [
+                    { x: 0, y: 0, width: WORLD_WIDTH, height: WORLD_HEIGHT, speed: 0, color: '#4682b4' },
+                    { x: 0, y: 450, width: WORLD_WIDTH, height: 150, speed: 0.2, color: '#2f4f4f' },
+                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, speed: 0.5, color: '#696969' }
+                ],
                 platforms: [
-                    { x: 0, y: 550, width: 800, height: 50, type: 'normal' },
-                    { x: 300, y: 450, width: 200, height: 20, type: 'normal' },
-                    { x: 100, y: 350, width: 150, height: 20, type: 'disappearing' },
-                    { x: 600, y: 250, width: 100, height: 20, type: 'normal' }
+                    { x: 0, y: 550, width: WORLD_WIDTH, height: 50, type: 'ground' },
+                    { x: 300, y: 350, width: 200, height: 20, type: 'platform' },
+                    { x: 600, y: 250, width: 150, height: 20, type: 'moving', yMin: 150, yMax: 350, vy: -2 },
+                    { x: 900, y: 400, width: 100, height: 20, type: 'disappearing', timer: 0 }
                 ],
                 coins: [
-                    { x: 350, y: 400, phase: 0 },
-                    { x: 150, y: 300, phase: 0 },
-                    { x: 650, y: 200, phase: 0 }
+                    { x: 350, y: 300, frame: 0, collected: false },
+                    { x: 650, y: 200, frame: 0, collected: false },
+                    { x: 950, y: 350, frame: 0, collected: false }
                 ],
                 enemies: [
-                    { x: 400, y: 430, vx: 3, minX: 300, maxX: 500 },
-                    { x: 200, y: 330, vx: -2, minX: 100, maxX: 250 }
+                    { type: 'walker', x: 1200, y: 510, vx: 3, minX: 1100, maxX: 1300, frame: 0 },
+                    { type: 'flyer', x: 1400, y: 300, vx: 0, vy: -3, minY: 200, maxY: 400, frame: 0 }
+                ],
+                hazards: [
+                    { x: 1600, y: 510, width: 150, height: 40, type: 'spikes' }
                 ]
             }
         ];
 
-        // Game objects (will be populated by loadLevel)
-        let platforms = [];
-        let coins = [];
-        let enemies = [];
+        let gameObjects = { platforms: [], coins: [], enemies: [], hazards: [], background: [] };
 
-        // Load a level based on index
-        function loadLevel(levelIndex) {
-            const level = levels[levelIndex];
-            platforms = level.platforms.map(platform => ({
-                ...platform,
-                disappearing: false,
-                disappearTimer: 0
-            }));
-            coins = level.coins.map(coin => ({ ...coin }));
-            enemies = level.enemies.map(enemy => ({ ...enemy }));
+        // Load level
+        function loadLevel(index) {
+            const level = levels[index];
+            gameObjects.background = level.background.map(bg => ({ ...bg }));
+            gameObjects.platforms = level.platforms.map(p => ({ ...p }));
+            gameObjects.coins = level.coins.map(c => ({ ...c }));
+            gameObjects.enemies = level.enemies.map(e => ({ ...e }));
+            gameObjects.hazards = level.hazards.map(h => ({ ...h }));
             player.x = 100;
-            player.y = 500;
+            player.y = 400;
             player.vx = 0;
             player.vy = 0;
+            player.combo = 0;
+            camera.x = 0;
         }
 
-        // Initialize game state
+        // Initialize game
         function init() {
             currentLevel = 0;
             loadLevel(currentLevel);
@@ -130,122 +156,112 @@
             gameState = 'start';
         }
 
-        // Event listeners for controls
-        document.addEventListener('keydown', (e) => {
-            if (gameState === 'start' && e.code === 'Space') {
-                gameState = 'playing';
-            } else if (gameState === 'game over' && e.code === 'Space') {
-                init();
-                gameState = 'playing';
-            } else if (gameState === 'win' && e.code === 'Space') {
-                init();
-                gameState = 'playing';
-            } else if (gameState === 'playing') {
-                if (e.code === 'ArrowLeft') keys.left = true;
-                if (e.code === 'ArrowRight') keys.right = true;
-                if (e.code === 'Space') keys.jump = true;
-            }
-        });
+        // Collision detection
+        function collides(a, b) {
+            return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+        }
 
-        document.addEventListener('keyup', (e) => {
-            if (gameState === 'playing') {
-                if (e.code === 'ArrowLeft') keys.left = false;
-                if (e.code === 'ArrowRight') keys.right = false;
-                if (e.code === 'Space') keys.jump = false;
-            }
-        });
-
-        // Update game state
+        // Update game
         function update(timestamp) {
             if (gameState !== 'playing') return;
 
-            // Apply gravity to player
-            player.vy += gravity;
+            // Player movement
+            player.vx *= FRICTION;
+            if (keys['ArrowLeft']) { player.vx = -MOVE_SPEED; player.direction = -1; player.state = 'run'; }
+            else if (keys['ArrowRight']) { player.vx = MOVE_SPEED; player.direction = 1; player.state = 'run'; }
+            else if (player.grounded) player.state = 'idle';
 
-            // Handle horizontal movement
-            if (keys.left) {
-                player.vx = -playerSpeed;
-            } else if (keys.right) {
-                player.vx = playerSpeed;
-            } else {
-                player.vx = 0;
-            }
-
-            // Handle jumping
-            if (keys.jump && player.grounded) {
-                player.vy = jumpStrength;
+            if (keys['Space'] && player.grounded && !player.jumping) {
+                player.vy = JUMP_FORCE;
                 player.grounded = false;
-                // Uncomment if you have a jump.mp3 file
-                // const jumpSound = new Audio('jump.mp3');
-                // jumpSound.play();
+                player.jumping = true;
+                player.state = 'jump';
             }
+            if (!keys['Space']) player.jumping = false;
 
-            // Update player position
+            player.vy += GRAVITY;
             player.x += player.vx;
             player.y += player.vy;
 
-            // Keep player within horizontal bounds
-            if (player.x < 0) player.x = 0;
-            if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+            // Animation frame
+            player.frame = (player.frame + 0.1) % 4;
 
-            // Collision with platforms
+            // Platform collisions
             player.grounded = false;
-            for (let platform of platforms) {
-                if (player.x < platform.x + platform.width &&
-                    player.x + player.width > platform.x &&
-                    player.y < platform.y + platform.height &&
-                    player.y + player.height > platform.y) {
-                    if (player.vy > 0 && player.y + player.height - player.vy <= platform.y) {
-                        // Landed on top
-                        player.y = platform.y - player.height;
+            for (let p of gameObjects.platforms) {
+                if (collides(player, p)) {
+                    if (player.vy > 0 && player.y + player.height - player.vy <= p.y) {
+                        player.y = p.y - player.height;
                         player.vy = 0;
                         player.grounded = true;
-                        if (platform.type === 'disappearing' && !platform.disappearing) {
-                            platform.disappearing = true;
-                            platform.disappearTimer = 30;
-                        }
+                    } else if (player.vy < 0 && player.y - player.vy >= p.y + p.height) {
+                        player.y = p.y + p.height;
+                        player.vy = 0;
                     }
                 }
-            }
-
-            // Handle disappearing platforms
-            for (let i = platforms.length - 1; i >= 0; i--) {
-                let platform = platforms[i];
-                if (platform.disappearing) {
-                    platform.disappearTimer--;
-                    if (platform.disappearTimer <= 0) {
-                        platforms.splice(i, 1);
-                    }
+                if (p.type === 'moving') {
+                    p.y += p.vy;
+                    if (p.y < p.yMin || p.y > p.yMax) p.vy *= -1;
+                }
+                if (p.type === 'disappearing' && collides(player, p) && p.timer === 0) {
+                    p.timer = 60;
+                }
+                if (p.timer > 0) {
+                    p.timer--;
+                    if (p.timer === 0) gameObjects.platforms = gameObjects.platforms.filter(plat => plat !== p);
                 }
             }
 
-            // Prevent falling off bottom
-            if (player.y > canvas.height - player.height) {
-                player.y = canvas.height - player.height;
-                player.vy = 0;
-                player.grounded = true;
-            }
-
-            // Update coin animations
-            for (let coin of coins) {
-                coin.phase += 0.05;
-                coin.scale = 1 + 0.1 * Math.sin(coin.phase);
-            }
-
-            // Check for coin collection
-            for (let i = coins.length - 1; i >= 0; i--) {
-                let coin = coins[i];
-                if (player.x < coin.x + 20 &&
-                    player.x + player.width > coin.x &&
-                    player.y < coin.y + 20 &&
-                    player.y + player.height > coin.y) {
-                    coins.splice(i, 1);
-                    score += 10;
+            // Coin collection
+            for (let i = gameObjects.coins.length - 1; i >= 0; i--) {
+                let coin = gameObjects.coins[i];
+                coin.frame = (coin.frame + 0.1) % 4;
+                if (collides(player, { x: coin.x, y: coin.y, width: 20, height: 20 }) && !coin.collected) {
+                    coin.collected = true;
+                    score += 10 + player.combo * 5;
+                    player.combo++;
+                    gameObjects.coins.splice(i, 1);
                 }
             }
 
-            // Check if level is complete
-            if (coins.length === 0) {
+            // Enemy updates
+            for (let e of gameObjects.enemies) {
+                e.frame = (e.frame + 0.1) % 4;
+                if (e.type === 'walker') {
+                    e.x += e.vx;
+                    if (e.x < e.minX || e.x > e.maxX) e.vx *= -1;
+                } else if (e.type === 'flyer') {
+                    e.y += e.vy;
+                    if (e.y < e.minY || e.y > e.maxY) e.vy *= -1;
+                }
+                if (collides(player, { x: e.x, y: e.y, width: 30, height: 30 }) && player.invulnerable === 0) {
+                    lives--;
+                    player.invulnerable = 60;
+                    player.x = 100;
+                    player.y = 400;
+                    player.vx = 0;
+                    player.vy = 0;
+                    player.combo = 0;
+                    if (lives <= 0) gameState = 'game over';
+                }
+            }
+
+            // Hazard collisions
+            for (let h of gameObjects.hazards) {
+                if (collides(player, h) && player.invulnerable === 0) {
+                    lives--;
+                    player.invulnerable = 60;
+                    player.x = 100;
+                    player.y = 400;
+                    player.vx = 0;
+                    player.vy = 0;
+                    player.combo = 0;
+                    if (lives <= 0) gameState = 'game over';
+                }
+            }
+
+            // Level completion
+            if (gameObjects.coins.length === 0) {
                 currentLevel++;
                 if (currentLevel < levels.length) {
                     loadLevel(currentLevel);
@@ -254,108 +270,109 @@
                 }
             }
 
-            // Update enemies
-            for (let enemy of enemies) {
-                enemy.x += enemy.vx;
-                if (enemy.x < enemy.minX || enemy.x > enemy.maxX) {
-                    enemy.vx *= -1;
-                }
+            // Boundaries
+            player.x = Math.max(0, Math.min(player.x, WORLD_WIDTH - player.width));
+            if (player.y > WORLD_HEIGHT) {
+                lives--;
+                player.x = 100;
+                player.y = 400;
+                player.vx = 0;
+                player.vy = 0;
+                if (lives <= 0) gameState = 'game over';
             }
 
-            // Check for enemy collisions
-            for (let enemy of enemies) {
-                if (player.x < enemy.x + 30 &&
-                    player.x + player.width > enemy.x &&
-                    player.y < enemy.y + 30 &&
-                    player.y + player.height > enemy.y) {
-                    lives--;
-                    if (lives > 0) {
-                        player.x = 100;
-                        player.y = 500;
-                        player.vx = 0;
-                        player.vy = 0;
-                    } else {
-                        gameState = 'game over';
-                    }
-                }
-            }
+            // Update invulnerability
+            if (player.invulnerable > 0) player.invulnerable--;
+
+            // Update camera
+            camera.follow(player.x);
+
+            // Update UI
+            document.getElementById('score').textContent = score;
+            document.getElementById('lives').textContent = lives;
+            document.getElementById('level').textContent = currentLevel + 1;
+            document.getElementById('combo').textContent = player.combo;
         }
 
-        // Draw game elements
+        // Draw game
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             if (gameState === 'start') {
-                ctx.fillStyle = 'black';
+                ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
-                ctx.fillText('Press Space to Start', canvas.width / 2, canvas.height / 2);
-            } else if (gameState === 'playing') {
-                // Draw sky
-                ctx.fillStyle = 'skyblue';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillText('Press Space to Begin', canvas.width / 2, canvas.height / 2);
+                return;
+            }
 
-                // Draw clouds
+            // Draw background with parallax
+            for (let bg of gameObjects.background) {
+                ctx.fillStyle = bg.color;
+                let bgX = -(camera.x * bg.speed) % bg.width;
+                ctx.fillRect(bgX, bg.y, bg.width, bg.height);
+                if (bgX < 0) ctx.fillRect(bgX + bg.width, bg.y, bg.width, bg.height);
+            }
+
+            // Draw platforms
+            for (let p of gameObjects.platforms) {
+                ctx.fillStyle = p.type === 'disappearing' && p.timer > 0 ? 'orange' : 'green';
+                ctx.fillRect(p.x - camera.x, p.y - camera.y, p.width, p.height);
+            }
+
+            // Draw coins
+            ctx.fillStyle = 'gold';
+            for (let c of gameObjects.coins) {
+                if (!c.collected) {
+                    let size = 20 + Math.sin(c.frame) * 5;
+                    ctx.fillRect(c.x - camera.x - size / 2, c.y - camera.y - size / 2, size, size);
+                }
+            }
+
+            // Draw enemies
+            for (let e of gameObjects.enemies) {
+                ctx.fillStyle = e.type === 'walker' ? 'purple' : 'red';
+                ctx.fillRect(e.x - camera.x, e.y - camera.y, 30, 30);
+            }
+
+            // Draw hazards
+            ctx.fillStyle = 'gray';
+            for (let h of gameObjects.hazards) {
+                ctx.fillRect(h.x - camera.x, h.y - camera.y, h.width, h.height);
+            }
+
+            // Draw player
+            ctx.fillStyle = player.invulnerable > 0 && Math.floor(player.invulnerable / 5) % 2 === 0 ? 'gray' : 'blue';
+            ctx.fillRect(player.x - camera.x, player.y - camera.y, player.width, player.height);
+
+            // Game over or win screen
+            if (gameState === 'game over') {
                 ctx.fillStyle = 'white';
-                ctx.fillRect(100, 50, 200, 50);
-                ctx.fillRect(400, 100, 150, 40);
-                ctx.fillRect(600, 70, 180, 60);
-
-                // Draw platforms
-                for (let platform of platforms) {
-                    ctx.fillStyle = platform.type === 'disappearing' && platform.disappearing ? 'orange' : 'green';
-                    ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
-                }
-
-                // Draw coins
-                ctx.fillStyle = 'yellow';
-                for (let coin of coins) {
-                    let size = 20 * coin.scale;
-                    ctx.fillRect(coin.x - (size - 20) / 2, coin.y - (size - 20) / 2, size, size);
-                }
-
-                // Draw enemies
-                ctx.fillStyle = 'purple';
-                for (let enemy of enemies) {
-                    ctx.fillRect(enemy.x, enemy.y, 30, 30);
-                }
-
-                // Draw player
-                ctx.fillStyle = 'red';
-                ctx.fillRect(player.x, player.y, player.width, player.height);
-
-                // Draw HUD
-                ctx.fillStyle = 'black';
-                ctx.font = '24px Arial';
-                ctx.textAlign = 'left';
-                ctx.fillText(`Score: ${score}`, 10, 30);
-                ctx.fillText(`Lives: ${lives}`, 10, 60);
-                ctx.fillText(`Level: ${currentLevel + 1}`, 700, 30);
-            } else if (gameState === 'game over') {
-                ctx.fillStyle = 'black';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2);
                 ctx.font = '24px Arial';
                 ctx.fillText('Press Space to Restart', canvas.width / 2, canvas.height / 2 + 50);
             } else if (gameState === 'win') {
-                ctx.fillStyle = 'black';
+                ctx.fillStyle = 'white';
                 ctx.font = '48px Arial';
                 ctx.textAlign = 'center';
-                ctx.fillText('You Win!', canvas.width / 2, canvas.height / 2);
+                ctx.fillText('Victory!', canvas.width / 2, canvas.height / 2);
                 ctx.font = '24px Arial';
-                ctx.fillText('Press Space to Play Again', canvas.width / 2, canvas.height / 2 + 50);
+                ctx.fillText('Press Space to Replay', canvas.width / 2, canvas.height / 2 + 50);
             }
         }
 
         // Game loop
         function gameLoop(timestamp) {
+            if (gameState === 'start' && keys['Space']) gameState = 'playing';
+            if ((gameState === 'game over' || gameState === 'win') && keys['Space']) init();
             update(timestamp);
             draw();
             requestAnimationFrame(gameLoop);
         }
 
-        // Start the game
+        // Start game
         init();
         requestAnimationFrame(gameLoop);
     </script>
